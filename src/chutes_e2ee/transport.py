@@ -8,9 +8,11 @@ Usage with the OpenAI SDK:
 
     client = OpenAI(
         api_key="cpk_...",
-        base_url="https://llm.chutes.ai/v1",
+        base_url="https://llm.chutes.ai/v1",  # OpenAI SDK uses this for /v1/models
         http_client=httpx.Client(transport=ChutesE2EETransport(api_key="cpk_...")),
     )
+    # The transport routes /v1/models to llm.chutes.ai and all E2EE
+    # calls (/e2e/invoke, /e2e/instances) to api.chutes.ai.
     resp = client.chat.completions.create(model="deepseek-ai/DeepSeek-R1", messages=[...])
 """
 
@@ -29,7 +31,8 @@ from chutes_e2ee.crypto import (
 )
 from chutes_e2ee.discovery import DiscoveryManager
 
-_DEFAULT_API_BASE = "https://api.chutes.dev"
+_DEFAULT_API_BASE = "https://api.chutes.ai"
+_DEFAULT_MODELS_BASE = "https://llm.chutes.ai"
 
 
 def _extract_json_body(request: httpx.Request) -> dict | None:
@@ -182,7 +185,9 @@ class ChutesE2EETransport(httpx.BaseTransport):
 
     Args:
         api_key: Chutes API key (``cpk_...``).
-        api_base: Base URL for the Chutes API (default: ``https://api.chutes.dev``).
+        api_base: Base URL for E2EE API calls (default: ``https://api.chutes.ai``).
+        models_base: Base URL for the ``/v1/models`` listing endpoint
+                     (default: ``https://llm.chutes.ai``).
         inner: Optional underlying httpx transport for the actual HTTP calls.
                Defaults to ``httpx.HTTPTransport()``.
     """
@@ -191,12 +196,15 @@ class ChutesE2EETransport(httpx.BaseTransport):
         self,
         api_key: str,
         api_base: str = _DEFAULT_API_BASE,
+        models_base: str = _DEFAULT_MODELS_BASE,
         inner: httpx.BaseTransport | None = None,
     ):
         self._api_key = api_key
         self._api_base = api_base.rstrip("/")
         self._inner = inner or httpx.HTTPTransport()
-        self._discovery = DiscoveryManager(api_base=self._api_base, api_key=api_key)
+        self._discovery = DiscoveryManager(
+            api_base=self._api_base, models_base=models_base, api_key=api_key
+        )
         # Lazy client for discovery calls (reuses the inner transport).
         self._http: httpx.Client | None = None
 
@@ -235,7 +243,9 @@ class ChutesE2EETransport(httpx.BaseTransport):
         invoke_url = f"{self._api_base}/e2e/invoke"
 
         if stream:
-            return self._handle_stream(invoke_url, headers, result.blob, result.response_sk, request)
+            return self._handle_stream(
+                invoke_url, headers, result.blob, result.response_sk, request
+            )
         else:
             return self._handle_non_stream(
                 invoke_url, headers, result.blob, result.response_sk, request
@@ -322,7 +332,9 @@ class AsyncChutesE2EETransport(httpx.AsyncBaseTransport):
 
     Args:
         api_key: Chutes API key (``cpk_...``).
-        api_base: Base URL for the Chutes API (default: ``https://api.chutes.dev``).
+        api_base: Base URL for E2EE API calls (default: ``https://api.chutes.ai``).
+        models_base: Base URL for the ``/v1/models`` listing endpoint
+                     (default: ``https://llm.chutes.ai``).
         inner: Optional underlying async httpx transport. Defaults to
                ``httpx.AsyncHTTPTransport()``.
     """
@@ -331,12 +343,15 @@ class AsyncChutesE2EETransport(httpx.AsyncBaseTransport):
         self,
         api_key: str,
         api_base: str = _DEFAULT_API_BASE,
+        models_base: str = _DEFAULT_MODELS_BASE,
         inner: httpx.AsyncBaseTransport | None = None,
     ):
         self._api_key = api_key
         self._api_base = api_base.rstrip("/")
         self._inner = inner or httpx.AsyncHTTPTransport()
-        self._discovery = DiscoveryManager(api_base=self._api_base, api_key=api_key)
+        self._discovery = DiscoveryManager(
+            api_base=self._api_base, models_base=models_base, api_key=api_key
+        )
         self._http: httpx.AsyncClient | None = None
 
     async def _get_http(self) -> httpx.AsyncClient:
@@ -437,9 +452,7 @@ class _AsyncDecryptedStream(httpx.AsyncByteStream):
         self._response_sk = response_sk
 
     async def __aiter__(self) -> typing.AsyncIterator[bytes]:
-        async for chunk in _aiter_sse_from_e2ee(
-            self._raw_stream.__aiter__(), self._response_sk
-        ):
+        async for chunk in _aiter_sse_from_e2ee(self._raw_stream.__aiter__(), self._response_sk):
             yield chunk
 
     async def aclose(self) -> None:

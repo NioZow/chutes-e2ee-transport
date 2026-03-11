@@ -57,8 +57,9 @@ class DiscoveryManager:
     This class is thread-safe and shared across requests within a transport.
     """
 
-    def __init__(self, api_base: str, api_key: str):
+    def __init__(self, api_base: str, api_key: str, models_base: str | None = None):
         self._api_base = api_base.rstrip("/")
+        self._models_base = (models_base or api_base).rstrip("/")
         self._api_key = api_key
         self._auth_headers = {"Authorization": f"Bearer {api_key}"}
 
@@ -110,7 +111,7 @@ class DiscoveryManager:
             if now - self._model_map_loaded_at < self._MODEL_MAP_TTL:
                 return
             resp = client.get(
-                f"{self._api_base}/v1/models",
+                f"{self._models_base}/v1/models",
                 headers=self._auth_headers,
                 timeout=15,
             )
@@ -206,7 +207,7 @@ class DiscoveryManager:
         if now - self._model_map_loaded_at < self._MODEL_MAP_TTL:
             return
         resp = await client.get(
-            f"{self._api_base}/v1/models",
+            f"{self._models_base}/v1/models",
             headers=self._auth_headers,
             timeout=15,
         )

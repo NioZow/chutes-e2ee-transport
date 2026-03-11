@@ -25,7 +25,7 @@ client = OpenAI(
     api_key=API_KEY,
     base_url="https://llm.chutes.ai/v1",
     http_client=httpx.Client(
-        transport=ChutesE2EETransport(api_key=API_KEY, api_base="https://llm.chutes.ai"),
+        transport=ChutesE2EETransport(api_key=API_KEY),
     ),
 )
 
@@ -49,7 +49,7 @@ client = AsyncOpenAI(
     api_key=API_KEY,
     base_url="https://llm.chutes.ai/v1",
     http_client=httpx.AsyncClient(
-        transport=AsyncChutesE2EETransport(api_key=API_KEY, api_base="https://llm.chutes.ai"),
+        transport=AsyncChutesE2EETransport(api_key=API_KEY),
     ),
 )
 
@@ -101,7 +101,8 @@ You can use model names (e.g. `zai-org/GLM-4.7-TEE`) or chute IDs directly. The 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `api_key` | *required* | Your Chutes API key |
-| `api_base` | `https://api.chutes.ai` | API base URL |
+| `api_base` | `https://api.chutes.ai` | Base URL for E2EE API calls (`/e2e/invoke`, `/e2e/instances`) |
+| `models_base` | `https://llm.chutes.ai` | Base URL for the `/v1/models` listing endpoint |
 | `inner` | `httpx.HTTPTransport()` | Underlying transport for actual HTTP calls |
 
 ## Dependencies

@@ -3,15 +3,14 @@ import httpx
 from openai import OpenAI
 from chutes_e2ee import ChutesE2EETransport
 
-API_KEY = os.environ["CHUTES_DEV_API_KEY"]
-API_BASE = "https://llm.chutes.dev"
-MODEL = "unsloth/Llama-3.2-1B-Instruct"
+API_KEY = os.environ["CHUTES_API_KEY"]
+MODEL = "deepseek-ai/DeepSeek-V3.1-TEE"
 
 client = OpenAI(
     api_key=API_KEY,
-    base_url=f"{API_BASE}/v1",
+    base_url="https://llm.chutes.ai/v1",
     http_client=httpx.Client(
-        transport=ChutesE2EETransport(api_key=API_KEY, api_base=API_BASE),
+        transport=ChutesE2EETransport(api_key=API_KEY),
     ),
 )
 
