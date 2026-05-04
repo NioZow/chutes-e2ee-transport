@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import typing
+from urllib.request import getproxies
 
 import httpx
 
@@ -33,6 +34,104 @@ from chutes_e2ee.discovery import DiscoveryManager
 
 _DEFAULT_API_BASE = "https://api.chutes.ai"
 _DEFAULT_MODELS_BASE = "https://llm.chutes.ai"
+
+
+# ---------------------------------------------------------------------------
+# Proxy helpers
+# ---------------------------------------------------------------------------
+
+
+def _read_proxy_env() -> tuple[str | None, str | None, list[str]]:
+    # getproxies() reads env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY) cross-platform,
+    # including Windows Registry and macOS System Configuration.
+    proxies = getproxies()
+    no_proxy = [h.strip() for h in proxies.get("no", "").split(",") if h.strip()]
+    return proxies.get("https"), proxies.get("http"), no_proxy
+
+
+def _matches_no_proxy(host: str, no_proxy: list[str]) -> bool:
+    # Entries are pre-normalised (lowercased, leading dot stripped) at init time.
+    host = host.lower()
+    for pattern in no_proxy:
+        if pattern == "*" or host == pattern or host.endswith("." + pattern):
+            return True
+    return False
+
+
+class _EnvProxyTransport(httpx.BaseTransport):
+    def __init__(
+        self,
+        https_proxy: str | None,
+        http_proxy: str | None,
+        no_proxy: list[str],
+    ) -> None:
+        self._no_proxy = [e.lower().lstrip(".") for e in no_proxy]
+        self._direct = httpx.HTTPTransport()
+        self._https = httpx.HTTPTransport(proxy=https_proxy) if https_proxy else None
+        self._http = httpx.HTTPTransport(proxy=http_proxy) if http_proxy else None
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        if _matches_no_proxy(request.url.host, self._no_proxy):
+            return self._direct.handle_request(request)
+        if request.url.scheme == "https" and self._https:
+            return self._https.handle_request(request)
+        if self._http:
+            return self._http.handle_request(request)
+        return self._direct.handle_request(request)
+
+    def close(self) -> None:
+        self._direct.close()
+        if self._https:
+            self._https.close()
+        if self._http:
+            self._http.close()
+
+
+class _AsyncEnvProxyTransport(httpx.AsyncBaseTransport):
+    def __init__(
+        self,
+        https_proxy: str | None,
+        http_proxy: str | None,
+        no_proxy: list[str],
+    ) -> None:
+        self._no_proxy = [e.lower().lstrip(".") for e in no_proxy]
+        self._direct = httpx.AsyncHTTPTransport()
+        self._https = httpx.AsyncHTTPTransport(proxy=https_proxy) if https_proxy else None
+        self._http = httpx.AsyncHTTPTransport(proxy=http_proxy) if http_proxy else None
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if _matches_no_proxy(request.url.host, self._no_proxy):
+            return await self._direct.handle_async_request(request)
+        if request.url.scheme == "https" and self._https:
+            return await self._https.handle_async_request(request)
+        if self._http:
+            return await self._http.handle_async_request(request)
+        return await self._direct.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self._direct.aclose()
+        if self._https:
+            await self._https.aclose()
+        if self._http:
+            await self._http.aclose()
+
+
+def _default_transport() -> httpx.BaseTransport:
+    https_proxy, http_proxy, no_proxy = _read_proxy_env()
+    if not (https_proxy or http_proxy):
+        return httpx.HTTPTransport()
+    if no_proxy or (https_proxy and http_proxy and https_proxy != http_proxy):
+        return _EnvProxyTransport(https_proxy, http_proxy, no_proxy)
+    return httpx.HTTPTransport(proxy=https_proxy or http_proxy)
+
+
+def _default_async_transport() -> httpx.AsyncBaseTransport:
+    https_proxy, http_proxy, no_proxy = _read_proxy_env()
+    if not (https_proxy or http_proxy):
+        return httpx.AsyncHTTPTransport()
+    if no_proxy or (https_proxy and http_proxy and https_proxy != http_proxy):
+        return _AsyncEnvProxyTransport(https_proxy, http_proxy, no_proxy)
+    return httpx.AsyncHTTPTransport(proxy=https_proxy or http_proxy)
 
 
 def _extract_json_body(request: httpx.Request) -> dict | None:
@@ -201,7 +300,7 @@ class ChutesE2EETransport(httpx.BaseTransport):
     ):
         self._api_key = api_key
         self._api_base = api_base.rstrip("/")
-        self._inner = inner or httpx.HTTPTransport()
+        self._inner = inner if inner is not None else _default_transport()
         self._discovery = DiscoveryManager(
             api_base=self._api_base, models_base=models_base, api_key=api_key
         )
@@ -348,7 +447,7 @@ class AsyncChutesE2EETransport(httpx.AsyncBaseTransport):
     ):
         self._api_key = api_key
         self._api_base = api_base.rstrip("/")
-        self._inner = inner or httpx.AsyncHTTPTransport()
+        self._inner = inner if inner is not None else _default_async_transport()
         self._discovery = DiscoveryManager(
             api_base=self._api_base, models_base=models_base, api_key=api_key
         )
