@@ -30,7 +30,7 @@ from chutes_e2ee.crypto import (
     decrypt_stream_chunk,
     decrypt_stream_init,
 )
-from chutes_e2ee.discovery import DiscoveryManager
+from chutes_e2ee.discovery import DiscoveryManager, InstanceFilter
 
 _DEFAULT_API_BASE = "https://api.chutes.ai"
 _DEFAULT_MODELS_BASE = "https://llm.chutes.ai"
@@ -289,6 +289,9 @@ class ChutesE2EETransport(httpx.BaseTransport):
                      (default: ``https://llm.chutes.ai``).
         inner: Optional underlying httpx transport for the actual HTTP calls.
                Defaults to ``httpx.HTTPTransport()``.
+        instance_filter: Optional ``(chute_id, instances) -> instances`` hook used
+               to restrict which discovered instances may be selected (e.g. to
+               only ever encrypt to attested instances).  May raise to refuse.
     """
 
     def __init__(
@@ -297,12 +300,16 @@ class ChutesE2EETransport(httpx.BaseTransport):
         api_base: str = _DEFAULT_API_BASE,
         models_base: str = _DEFAULT_MODELS_BASE,
         inner: httpx.BaseTransport | None = None,
+        instance_filter: InstanceFilter | None = None,
     ):
         self._api_key = api_key
         self._api_base = api_base.rstrip("/")
         self._inner = inner if inner is not None else _default_transport()
         self._discovery = DiscoveryManager(
-            api_base=self._api_base, models_base=models_base, api_key=api_key
+            api_base=self._api_base,
+            models_base=models_base,
+            api_key=api_key,
+            instance_filter=instance_filter,
         )
         # Lazy client for discovery calls (reuses the inner transport).
         self._http: httpx.Client | None = None
@@ -436,6 +443,9 @@ class AsyncChutesE2EETransport(httpx.AsyncBaseTransport):
                      (default: ``https://llm.chutes.ai``).
         inner: Optional underlying async httpx transport. Defaults to
                ``httpx.AsyncHTTPTransport()``.
+        instance_filter: Optional ``(chute_id, instances) -> instances`` hook used
+               to restrict which discovered instances may be selected (e.g. to
+               only ever encrypt to attested instances).  May raise to refuse.
     """
 
     def __init__(
@@ -444,12 +454,16 @@ class AsyncChutesE2EETransport(httpx.AsyncBaseTransport):
         api_base: str = _DEFAULT_API_BASE,
         models_base: str = _DEFAULT_MODELS_BASE,
         inner: httpx.AsyncBaseTransport | None = None,
+        instance_filter: InstanceFilter | None = None,
     ):
         self._api_key = api_key
         self._api_base = api_base.rstrip("/")
         self._inner = inner if inner is not None else _default_async_transport()
         self._discovery = DiscoveryManager(
-            api_base=self._api_base, models_base=models_base, api_key=api_key
+            api_base=self._api_base,
+            models_base=models_base,
+            api_key=api_key,
+            instance_filter=instance_filter,
         )
         self._http: httpx.AsyncClient | None = None
 

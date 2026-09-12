@@ -7,8 +7,13 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
+from typing import Callable
 
 import httpx
+
+# Optional hook: given a chute id and the instances discovery just listed, return
+# the subset that may be selected.  May raise to refuse the chute entirely.
+InstanceFilter = Callable[[str, list["InstanceInfo"]], list["InstanceInfo"]]
 
 
 @dataclass
@@ -57,11 +62,21 @@ class DiscoveryManager:
     This class is thread-safe and shared across requests within a transport.
     """
 
-    def __init__(self, api_base: str, api_key: str, models_base: str | None = None):
+    def __init__(
+        self,
+        api_base: str,
+        api_key: str,
+        models_base: str | None = None,
+        instance_filter: InstanceFilter | None = None,
+    ):
         self._api_base = api_base.rstrip("/")
         self._models_base = (models_base or api_base).rstrip("/")
         self._api_key = api_key
         self._auth_headers = {"Authorization": f"Bearer {api_key}"}
+        # Optional selection hook (e.g. an attestation gate).  When set, every
+        # nonce pool is restricted to the instances it approves, so a request can
+        # only ever be encrypted to an instance the caller trusts.
+        self._instance_filter = instance_filter
 
         # chute_id -> _CachedNonces
         self._nonce_cache: dict[str, _CachedNonces] = {}
@@ -130,6 +145,25 @@ class DiscoveryManager:
     # Instance discovery + nonce management
     # ------------------------------------------------------------------
 
+    def _apply_instance_filter(self, chute_id: str, discovery: "DiscoveryResult") -> "DiscoveryResult":
+        """Restrict a freshly fetched instance pool to the approved subset.
+
+        The hook may raise to refuse the chute.  If it returns no instances while
+        the API listed some, the chute is refused too (fail closed) rather than
+        silently falling back to an unapproved instance.
+        """
+        if self._instance_filter is None:
+            return discovery
+        allowed = self._instance_filter(chute_id, list(discovery.instances))
+        allowed_ids = {inst.instance_id for inst in allowed}
+        instances = [inst for inst in discovery.instances if inst.instance_id in allowed_ids]
+        if not instances:
+            raise RuntimeError(
+                f"Instance filter rejected every instance for chute {chute_id} "
+                f"({len(allowed_ids)} allowed of {len(discovery.instances)} listed)."
+            )
+        return DiscoveryResult(instances=instances, nonce_expires_at=discovery.nonce_expires_at)
+
     def get_nonce(self, chute_id: str, client: httpx.Client) -> tuple[InstanceInfo, str]:
         """Get an (instance, nonce) pair, fetching new ones if needed."""
         with self._cache_lock:
@@ -140,7 +174,7 @@ class DiscoveryManager:
             if result:
                 return result
 
-        discovery = self._fetch_instances(chute_id, client)
+        discovery = self._apply_instance_filter(chute_id, self._fetch_instances(chute_id, client))
         cached = _CachedNonces(
             instances=discovery.instances,
             expires_at=discovery.nonce_expires_at,
@@ -233,7 +267,9 @@ class DiscoveryManager:
             if result:
                 return result
 
-        discovery = await self._fetch_instances_async(chute_id, client)
+        discovery = self._apply_instance_filter(
+            chute_id, await self._fetch_instances_async(chute_id, client)
+        )
         cached = _CachedNonces(
             instances=discovery.instances,
             expires_at=discovery.nonce_expires_at,
